@@ -1,0 +1,512 @@
+##################################################
+# General
+##################################################
+
+# Python lib.s
+# fix: https://stackoverflow.com/a/40846742
+import warnings
+warnings.filterwarnings("ignore", message="numpy.dtype size changed")
+warnings.filterwarnings("ignore", message="numpy.ufunc size changed")
+# modules
+import os
+import re
+import pandas
+import datetime
+
+# Config file
+CONFIG_JSON = "pipeline.json"
+configfile: CONFIG_JSON
+
+##################################################
+# Data
+##################################################
+# Primers
+PRIMERS=pandas.read_csv(filepath_or_buffer=config["data"]["primer_file"], sep='\t', header=None)
+PRIMERS.set_index(keys=0, drop=True, inplace=True, verify_integrity=True)
+
+# Meta info
+ID_COL_N = config["data"]["meta_id_col_name"]
+META=pandas.read_csv(filepath_or_buffer=config["data"]["meta_file"], sep='\t', header=0)
+
+# Sample IDs
+IDS=sorted(set(META[ID_COL_N]))
+
+# Sample/amplicon/read IDs
+SAR_IDS=expand("{sid}_{aid}_{rid}", sid=IDS, aid=config["data"]["amplicons"], rid=config["data"]["reads"])
+
+##################################################
+# Targets
+##################################################
+# FastQC reports -> MultiQC report
+MULTIQC_REPORT=config["data"]["ddir"] + "/multiqc/multiqc.html"
+MULTIQC_STATS=config["data"]["ddir"] + "/multiqc/multiqc_data/multiqc_general_stats.txt"
+MULTIQC_PDF=config["data"]["ddir"] + "/multiqc/multiqc_plots.pdf"
+
+# LotuS
+# OTU counts as table: OTU.txt
+# OTU tax. as table: hiera_RDP.txt
+# OTU tree: Tree.tre
+# OTU MSA: otuMultAlign.fna
+LOTUS_DONE = expand(config["data"]["ddir"] + "/lotus/{aid}/lotus.done", aid=config["data"]["amplicons"])
+LOTUS_COUNTS = expand(config["data"]["ddir"] + "/lotus/{aid}/OTU.txt", aid=config["data"]["amplicons"])
+LOTUS_TAX = expand(config["data"]["ddir"] + "/lotus/{aid}/hiera_RDP.txt", aid=config["data"]["amplicons"])
+LOTUS_TREE = expand(config["data"]["ddir"] + "/lotus/{aid}/Tree.tre", aid=config["data"]["amplicons"])
+
+# Blast hits taxonomy
+BLASTN_NT_TAB = expand(config["data"]["ddir"] + "/blastn_nt/{aid}.tab", aid=config["data"]["amplicons"])
+BLASTN_NT_TAX = expand(config["data"]["ddir"] + "/blastn_nt/{aid}.tax", aid=config["data"]["amplicons"])
+
+# Filter OTUs
+OTUS_FILTERED = expand(config["data"]["ddir"] + "/filtered_otus/{aid}.tsv", aid=config["data"]["amplicons"])
+OTUS_FILTERED_PDF = expand(config["data"]["ddir"] + "/filtered_otus/{aid}.pdf", aid=config["data"]["amplicons"])
+OTUS_FILTERED_RDS = expand(config["data"]["ddir"] + "/filtered_otus/{aid}.rds", aid=config["data"]["amplicons"])
+
+# Krona plot
+KRONA_XML  = config["data"]["ddir"] + "/krona/krona.xml"
+KRONA_HTML = config["data"]["ddir"] + "/krona/krona.html"
+
+# Ampvis2
+AMP_ADIV = expand(config["data"]["ddir"] + "/ampvis2/{aid}_alphadiv.tsv", aid=config["data"]["amplicons"])
+AMP_PDF = expand(config["data"]["ddir"] + "/ampvis2/{aid}.pdf", aid=config["data"]["amplicons"])
+AMP_RDS = expand(config["data"]["ddir"] + "/ampvis2/{aid}.rds", aid=config["data"]["amplicons"])
+
+# CLR transformation
+CLR = expand(config["data"]["ddir"] + "/clr/{aid}.tsv", aid=config["data"]["amplicons"])
+
+# CLR analysis
+CLR_ANALYSIS_PCA = expand(config["data"]["ddir"] + "/clr_analysis/{aid}_trans_pca.pdf", aid=config["data"]["amplicons"])
+CLR_ANALYSIS_PH = expand(config["data"]["ddir"] + "/clr_analysis/{aid}_trans_pheatmap.pdf", aid=config["data"]["amplicons"])
+
+# Specific taxa
+CLR_TAXA = expand(config["data"]["ddir"] + "/clr_taxa/{aid}.pdf", aid=config["data"]["amplicons"])
+
+# ALDEx2 analysis
+ALDEX2_ANALYSIS = expand(config["data"]["ddir"] + "/aldex2_analysis/{aid}.done", aid=config["data"]["amplicons"])
+ALDEX2_ANALYSIS_OV = expand(config["data"]["ddir"] + "/aldex2_analysis/{aid}_aldex2_ov.pdf", aid=config["data"]["amplicons"])
+ALDEX2_ANALYSIS_TAB = expand(config["data"]["ddir"] + "/aldex2_analysis/{aid}_aldex2.tsv", aid=config["data"]["amplicons"])
+
+##################################################
+# Rules
+##################################################
+rule all:
+    input:
+        multiqc=[MULTIQC_REPORT, MULTIQC_PDF],
+        lotus=[LOTUS_DONE, LOTUS_COUNTS, LOTUS_TAX, LOTUS_TREE],
+        blastn_nt=BLASTN_NT_TAX,
+        filter=OTUS_FILTERED + OTUS_FILTERED_PDF + OTUS_FILTERED_RDS,
+        krona=KRONA_HTML,
+        ampvis2=[AMP_ADIV, AMP_PDF, AMP_RDS],
+        clr=CLR,
+        clr_analysis=[CLR_ANALYSIS_PCA, CLR_ANALYSIS_PH],
+        clr_taxa=CLR_TAXA,
+        aldex2_analysis=ALDEX2_ANALYSIS
+
+# QC
+##################################################
+rule run_fastqc:
+    input:
+        config["data"]["ddir"] + "/fastq/{sar_id}.fastq"
+    output:
+        zip=config["data"]["ddir"] + "/fastqc/{sar_id}_fastqc.zip",
+        html=config["data"]["ddir"] + "/fastqc/{sar_id}_fastqc.html"
+    params:
+        dir=config["data"]["ddir"] + "/fastqc",
+        tool_bin=config["tools"]["fastqc"]["bin"],
+        cores=2
+    message:
+        "Run FastQC with {threads} threads with file {input}"
+    shell:
+        "mkdir -p {params.dir} && {params.tool_bin} -o {params.dir} {input} -t {params.cores}"
+
+rule run_multiqc:
+    input:
+        fastqc_reports=expand(config["data"]["ddir"] +  "/fastqc/{sar_id}_fastqc.zip", sar_id=SAR_IDS)
+    output:
+        report=MULTIQC_REPORT,
+        stats=MULTIQC_STATS
+    log:
+        MULTIQC_REPORT + '.log'
+    params:
+        odir=config["tools"]["multiqc"]["odir"],
+        idir=config["tools"]["fastqc"]["odir"],
+        tool_bin=config["tools"]["multiqc"]["bin"]
+    message:
+        "Run MultiQC to create {output}"
+    shell:
+        "mkdir -p {params.odir} && {params.tool_bin} --interactive  -f -o {params.odir} -n $(basename {output.report}) {params.idir} 2>&1 | tee {log}"
+
+rule plot_multiqc:
+    input:
+        stats=MULTIQC_STATS,
+        meta=config["data"]["meta_file"],
+        ids=config["data"]["id_map"],
+        script='src/multiqc_analysis.R'
+    output:
+        MULTIQC_PDF
+    params:
+        obname=lambda wildcards,output: os.path.splitext(output[0])[0]
+    message:
+        "Plot stat.s from MultiQC reports: {input.stats}"
+    shell:
+        "Rscript {input.script} --multiqc_stats {input.stats} --sample_meta {input.meta} --sample_ids {input.ids} --obname {params.obname}"
+
+# LotuS (OTUs)
+##################################################
+# NOTE: Commented out (see README.md: "Note: precomputed output")
+rule lotus_config:
+    output:
+        os.path.join(config["tools"]["lotus"]["odir"], "{aid}.config")
+    message: "Create Lotus sample config {output}"
+    run:
+        if not os.path.exists(os.path.dirname(output[0])):
+            os.makedirs(os.path.dirname(output[0]))
+        with open(output[0], 'w') as ofile:
+            ofile.write("#" + "\t".join(config["tools"]["lotus"]["header"]) + "\n")
+            for sid in IDS:
+                fwd=PRIMERS.loc["%s_FWD" % wildcards.aid][1]
+                rev=PRIMERS.loc["%s_REV" % wildcards.aid][1]
+                r1="%s_%s_R1.fastq" % (sid, wildcards.aid)
+                r2="%s_%s_R2.fastq" % (sid, wildcards.aid)
+                ofile.write("\t".join([sid, fwd, rev, "%s,%s" % (r1, r2) ]) + "\n")
+
+# NOTE: Commented out (see README.md: "Note: precomputed output")
+# rule run_lotus:
+#     input:
+#         os.path.join(config["tools"]["lotus"]["odir"], "{aid}.config")
+#     output:
+#         main=os.path.join(config["tools"]["lotus"]["odir"], "{aid}/lotus.done"),
+#         txt =os.path.join(config["tools"]["lotus"]["odir"], "{aid}/OTU.txt"),
+#         biom=os.path.join(config["tools"]["lotus"]["odir"], "{aid}/OTU.biom"),
+#         tax =os.path.join(config["tools"]["lotus"]["odir"], "{aid}/hiera_RDP.txt"),
+#         fa  =os.path.join(config["tools"]["lotus"]["odir"], "{aid}/otus.fa"),
+#         msa =os.path.join(config["tools"]["lotus"]["odir"], "{aid}/otuMultAlign.fna"),
+#         tree=os.path.join(config["tools"]["lotus"]["odir"], "{aid}/Tree.tre")
+#     params:
+#         tool_bin=config["tools"]["lotus"]["bin"],
+#         idir=config["data"]["ddir"] + "/fastq",
+#         config=config["tools"]["lotus"]["config"],
+#         sdm=config["tools"]["lotus"]["sdm"]
+#     message: "Run LotuS for sample config {input}"
+#     shell:
+#         "{params.tool_bin} -i {params.idir} -c {params.config} -m $(realpath {input}) -s {params.sdm} -p miSeq -o $(dirname {output.main}) && touch {output.main}"
+
+# NOTE: Replaces rule run_lotus (see README.md: "Note: precomputed output")
+rule run_lotus_placeholder:
+    input:
+        os.path.join(config["tools"]["lotus"]["odir"], "{aid}.config")
+    output:
+        main=os.path.join(config["tools"]["lotus"]["odir"], "{aid}/lotus.done"),
+        txt =os.path.join(config["tools"]["lotus"]["odir"], "{aid}/OTU.txt"),
+        biom=os.path.join(config["tools"]["lotus"]["odir"], "{aid}/OTU.biom"),
+        tax =os.path.join(config["tools"]["lotus"]["odir"], "{aid}/hiera_RDP.txt"),
+        fa  =os.path.join(config["tools"]["lotus"]["odir"], "{aid}/otus.fa"),
+        msa =os.path.join(config["tools"]["lotus"]["odir"], "{aid}/otuMultAlign.fna"),
+        tree=os.path.join(config["tools"]["lotus"]["odir"], "{aid}/Tree.tre")
+    params:
+        sdir=os.path.join(config["data"]["ddir"], "precomputed/lotus/{aid}/"),
+        tdir=os.path.join(config["tools"]["lotus"]["odir"], "{aid}/")
+    shell:
+        "mkdir -p {params.tdir} && rsync -av {params.sdir} {params.tdir}"
+
+# Blastn (OTUs)
+##################################################
+# NOTE: Commented out (see README.md: "Note: precomputed output")
+# rule run_blastn_asn:
+#     input:
+#         config["tools"]["lotus"]["odir"] + "/{aid}/otus.fa"
+#     output:
+#         config["tools"]["blast"]["odir"] + "/{aid}.asn"
+#     params:
+#         tool_bin=config["tools"]["blast"]["bin_blastn"],
+#         tool_params=config["tools"]["blast"]["params_blastn"],
+#         db=config["tools"]["blast"]["db"]
+#     message: "Run blastn with db {params.db} on {input}"
+#     shell:
+#         "mkdir -p $(dirname {output}) && {params.tool_bin} {params.tool_params} -query {input} -db {params.db} -out {output}"
+#
+# rule run_blastn_tab:
+#     input:
+#         config["tools"]["blast"]["odir"] + "/{aid}.asn"
+#     output:
+#         config["tools"]["blast"]["odir"] + "/{aid}.tab"
+#     params:
+#         tool_bin=config["tools"]["blast"]["bin_format"],
+#         tool_params="6 " + config["tools"]["blast"]["header"]
+#     message: "ASN to TAB: {input} -> {output}"
+#     shell:
+#         "{params.tool_bin} -archive {input} -outfmt \"{params.tool_params}\" > {output}"
+#
+# rule run_blastn_tax:
+#     input:
+#         config["tools"]["blast"]["odir"] + "/{aid}.tab"
+#     output:
+#         config["tools"]["blast"]["odir"] + "/{aid}.tax"
+#     message:
+#         "Get taxonomy for blast hits in {input}"
+#     run:
+#         from utils import run_cmd, proc_taxon_query_results
+#         # hits
+#         df = pandas.read_csv(input[0], sep='\t', header=None, names=config["tools"]["blast"]["header"].split(" "))
+#
+#         # get top hit per OTU
+#         df_ = []
+#         for aggr_otu, aggr_df in df.groupby(['qseqid']):
+#             top_hit = aggr_df.sort_values(by=['qcovhsp', 'pident'], ascending=[False, False]).head(1)
+#             df_.append(top_hit)
+#         df_ = pandas.concat(df_)
+#         df_['sseqgi'] = df['sseqid'].apply(lambda x: x.split('|')[1])
+#         df_['sseqacc'] = df['sseqid'].apply(lambda x: x.split('|')[3])
+#
+#         # get tax. ID for each unique subject ID
+#         sseqids = set(df_['sseqacc'])
+#         cmd = config['tools']['edirect']['cmd']['nuccore'].format(
+#             path=config['tools']['edirect']['bin'],
+#             ids=','.join(sseqids),
+#             output='%s.tax' % output[0]
+#         )
+#         cmd, cmd_s, cmd_o = run_cmd(cmd)
+#         assert cmd_s == 0, 'CMD: {}: {}\n{}'.format(cmd, cmd_s, cmd_o)
+#         # read in tax. IDs
+#         tax = pandas.read_csv('%s.tax' % output[0], sep='\t', header=None, names=['Extra', 'Gi', 'AccessionVersion', 'TaxId'], dtype='str')
+#         assert all(list(pandas.notnull(tax['AccessionVersion'])))
+#         tax.set_index(keys=['AccessionVersion'], drop=True, inplace=True, verify_integrity=True)
+#
+#         # get further tax. information
+#         taxids = set(tax['TaxId'])
+#         cmd = config['tools']['edirect']['cmd']['taxon'].format(
+#             path=config['tools']['edirect']['bin'],
+#             ids=','.join(taxids),
+#             output='%s.taxmap' % output[0]
+#         )
+#         cmd, cmd_s, cmd_o = run_cmd(cmd)
+#         assert cmd_s == 0, 'CMD: {}: {}\n{}'.format(cmd, cmd_s, cmd_o)
+#         # read in
+#         taxmap = proc_taxon_query_results('%s.taxmap' % output[0])
+#         taxmap.set_index(keys=['taxon_id'], drop=True, inplace=True, verify_integrity=True)
+#
+#         # map/merge
+#         tax = pandas.merge(
+#             left=tax,
+#             right=taxmap,
+#             how='left',
+#             left_on='TaxId',
+#             right_index=True,
+#             sort=False
+#         )
+#         df_ = pandas.merge(
+#             left=df_,
+#             right=tax,
+#             how='left',
+#             left_on='sseqacc',
+#             right_index=True,
+#             sort=False
+#         )
+#
+#         # save
+#         df_.to_csv(output[0], sep='\t', header=True, index=False, index_label=False)
+#
+#         # rm tmp files
+#         os.remove('%s.tax' % output[0])
+#         os.remove('%s.taxmap' % output[0])
+
+# NOTE: Replaces rules run_blastn_asn, run_blastn_tab, run_blastn_tax from above (see README.md: "Note: precomputed output")
+rule run_blastn_tax_placeholder:
+    input:
+        config["tools"]["lotus"]["odir"] + "/{aid}/otus.fa"
+    output:
+        config["tools"]["blast"]["odir"] + "/{aid}.tax"
+    params:
+        sfile=os.path.join(config["data"]["ddir"], "precomputed/blastn_nt/{aid}.tax"),
+        tdir=config["tools"]["blast"]["odir"]
+    shell:
+        "mkdir -p {params.tdir} && rsync -av {params.sfile} {output}"
+
+# OTU filtering
+##################################################
+rule filter_otus:
+    input:
+        counts=config["data"]["ddir"] + "/lotus/{aid}/OTU.txt",
+        tax=config["data"]["ddir"] + "/lotus/{aid}/hiera_RDP.txt",
+        tree=config["data"]["ddir"] + "/lotus/{aid}/Tree.tre",
+        blastn=config["data"]["ddir"] + "/blastn_nt/{aid}.tax",
+        meta=config["data"]["meta_file"],
+        ids=config["data"]["id_map"],
+        script='src/filter_otus.R'
+    output:
+        tab=config["data"]["ddir"] + "/filtered_otus/{aid}.tsv",
+        pdf=config["data"]["ddir"] + "/filtered_otus/{aid}.pdf",
+        rds=config["data"]["ddir"] + "/filtered_otus/{aid}.rds"
+    params:
+        ctrls=lambda wildcards: config["data"]["controls"][wildcards.aid]
+    shell:
+        "mkdir -p $(dirname {output.tab}) && Rscript {input.script} -c {input.counts} -t {input.tax} -b {input.blastn} -p {input.tree} -m {input.meta} -i {input.ids} --ctrls {params.ctrls} --otab {output.tab} --opdf {output.pdf} --ords {output.rds}"
+
+# Krona
+##################################################
+rule krona_xml:
+    input:
+        otus=OTUS_FILTERED,
+        meta=config["data"]["meta_file"],
+    output:
+        KRONA_XML
+    run:
+        import xml.etree.cElementTree as ET
+        from utils import aggr_taxa_for_xml
+
+        controls = config['data']['controls']['V1V2'] + config['data']['controls']['V3V4']
+
+        taxon_ranks = ['domain', 'phylum', 'class', 'order', 'family', 'genus']
+
+        meta = pandas.read_csv(input.meta, sep='\t', header=0)
+        meta = meta[['SampleID', 'Indication']]
+        meta = meta.loc[meta.SampleID.map(lambda x: x not in controls),]
+        meta.drop_duplicates(inplace=True)
+        print(meta)
+
+        dfs = {}
+        for otus_f in input.otus:
+            ampl = os.path.splitext(os.path.basename(otus_f))[0] # amplicon
+            tmp = pandas.read_csv(otus_f, sep='\t', header=0, index_col=0)
+            # filter otus
+            tmp = tmp.loc[tmp['FLAG'] == 'kept',:]
+            print('%s: %d' % (otus_f, tmp.shape[0]))
+            # all
+            dfs['%s (All)' % ampl] = tmp[taxon_ranks]
+            # per group
+            for label, label_df in meta.groupby(by='Indication'):
+                non_zero_otus = tmp.loc[:,label_df['SampleID']].sum(1) > 0 # count sum per OTU for selected samples
+                dfs['%s (%s)' % (ampl, label)] = tmp.loc[non_zero_otus,taxon_ranks]
+
+        labels = sorted(dfs.keys())
+        dfs = pandas.concat(dfs, axis=0)
+        dfs.index.set_names(['db', 'id'], inplace=True)
+
+        ##############################
+        # XML
+        # root element
+        krona = ET.Element("krona")
+
+        # attributes
+        attrs = ET.SubElement(krona, 'attributes')
+        attrs.attrib['magnitude'] = "count"
+        attr_count = ET.SubElement(attrs, 'attribute')
+        attr_count.attrib['display'] = "Count"
+        attr_count.text = "count"
+
+        # datasets
+        datasets = ET.SubElement(krona, 'datasets')
+        for db in labels:
+            ET.SubElement(datasets, 'dataset').text = db
+
+        # taxonomy (nodes)
+        # root node -> all
+        root_node = ET.SubElement(krona, 'node')
+        root_node.attrib['name'] = "OTUs"
+        root_count = ET.SubElement(root_node, 'count')
+        for db in labels:
+            if db in set(dfs.index.get_level_values(0)):
+                db_count = ET.SubElement(root_count, 'val').text = str(dfs.loc[db,:].shape[0])
+            else:
+                db_count = ET.SubElement(root_count, 'val').text = '0'
+        # nodes for ranks
+        nodes = aggr_taxa_for_xml(root_node, dfs, 'domain', taxon_ranks, labels)
+
+        # XML END
+        ##############################
+
+        # create tree
+        tree = ET.ElementTree(krona)
+        # save to file
+        tree.write(output[0])
+
+rule krona_html:
+    input:
+        KRONA_XML
+    output:
+        KRONA_HTML
+    message:
+        "Create Krona plot from {input}"
+    params:
+        bin=config['tools']['krona']['bin'] + '/ktImportXML'
+    shell:
+        "{params.bin} {input} -o {output}"
+
+# Ampvis2
+##################################################
+rule call_ampvis2:
+    input:
+        otus=config["data"]["ddir"] + "/filtered_otus/{aid}.tsv",
+        meta=config["data"]["meta_file"],
+        script='src/ampvis2_analysis.R'
+    output:
+        adiv=config["data"]["ddir"] + "/ampvis2/{aid}_alphadiv.tsv",
+        pdf=config["data"]["ddir"] + "/ampvis2/{aid}.pdf",
+        rds=config["data"]["ddir"] + "/ampvis2/{aid}.rds"
+    params:
+        obname=lambda wildcards: config["data"]["ddir"] + "/ampvis2/%s" % wildcards.aid
+    shell:
+        "mkdir -p $(dirname {output.pdf}) && Rscript {input.script} --otus {input.otus} --sample_meta {input.meta} --obname {params.obname}"
+
+# Scaling
+##################################################
+rule clr_transform:
+    input:
+        otus=config["data"]["ddir"] + "/filtered_otus/{aid}.tsv",
+        meta=config["data"]["meta_file"],
+        script='src/clr_transform.R'
+    output:
+        config["data"]["ddir"] + "/clr/{aid}.tsv"
+    shell:
+        "mkdir -p $(dirname {output}) && Rscript {input.script} --otus {input.otus} --sample_meta {input.meta} --ofile {output}"
+
+# Analysis of scaled counts
+##################################################
+rule trans_analysis:
+    input:
+        trans=config["data"]["ddir"] + "/{trans}/{aid}.tsv",
+        meta=config["data"]["meta_file"],
+        annot=config["data"]["annot_file"],
+        ids=config["data"]["id_map"],
+        script='src/trans_analysis.R'
+    output:
+        pca=config["data"]["ddir"] + "/{trans}_analysis/{aid}_trans_pca.pdf",
+        heatmap=config["data"]["ddir"] + "/{trans}_analysis/{aid}_trans_pheatmap.pdf"
+    params:
+        obname=lambda wildcards, output: os.path.join(os.path.dirname(output[0]), wildcards.aid),
+        odir=lambda wildcards, output: os.path.dirname(output[0])
+    shell:
+        "mkdir -p {params.odir} && Rscript {input.script} --trans {input.trans} --sample_meta {input.meta} --sample_annot {input.annot} --sample_ids {input.ids} --obname {params.obname}"
+
+rule clr_taxa:
+    input:
+        otus=config["data"]["ddir"] + "/filtered_otus/{aid}.tsv",
+        trans=config["data"]["ddir"] + "/clr/{aid}.tsv",
+        meta=config["data"]["meta_file"],
+        ids=config["data"]["id_map"],
+        script='src/clr_taxa.R'
+    output:
+        config["data"]["ddir"] + "/clr_taxa/{aid}.pdf"
+    params:
+        taxa=config['data']['taxa'],
+        obname=lambda wildcards, output: os.path.splitext(output[0])[0]
+    shell:
+        "mkdir -p $(dirname {output}) && Rscript {input.script} --otus {input.otus} --trans {input.trans} --sample_meta {input.meta} --sample_ids {input.ids} --taxa {params.taxa} --obname {params.obname}"
+
+# Diff. analysis
+##################################################
+rule aldex2_analysis:
+    input:
+        otus=config["data"]["ddir"] + "/filtered_otus/{aid}.tsv",
+        meta=config["data"]["meta_file"],
+        script='src/aldex2_analysis.R'
+    output:
+        target=config["data"]["ddir"] + "/aldex2_analysis/{aid}.done",
+        ov=config["data"]["ddir"] + "/aldex2_analysis/{aid}_aldex2_ov.pdf",
+        tab=config["data"]["ddir"] + "/aldex2_analysis/{aid}_aldex2.tsv"
+    params:
+        obname=lambda wildcards, output: os.path.splitext(output.target)[0],
+        pv_col='wi.ep',
+        pv_cutoff=0.05,
+        eff_cutoff=0.5
+    shell:
+        "mkdir -p $(dirname {output.target}) && Rscript {input.script} --otus {input.otus} --sample_meta {input.meta} --obname {params.obname} --pv_col {params.pv_col} --pv_cutoff {params.pv_cutoff} --eff_cutoff {params.eff_cutoff} && touch {output.target}"

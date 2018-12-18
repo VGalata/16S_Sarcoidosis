@@ -1,0 +1,13 @@
+*.tmp
+*.log
+**/Rplots.pdf
+**/__pycache__/
+**/.snakemake/
+venv/*
+tools/*
+data/*
+!/data/meta_01.tsv
+!/data/meta_02.tsv
+!/data/ID_map.tsv
+!/data/primer.txt
+!/data/precomputed/

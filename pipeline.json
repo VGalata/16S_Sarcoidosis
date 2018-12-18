@@ -1,0 +1,62 @@
+{
+    "data": {
+        "fastq": "data/fastq_raw",
+        "ddir": "data",
+        "amplicons": ["V1V2", "V3V4"],
+        "reads": ["R1", "R2"],
+        "primer_file": "data/primer.txt",
+        "meta_file": "data/meta_01.tsv",
+        "meta_id_col_name": "SampleID",
+        "controls": {
+            "V1V2": ["NTC"],
+            "V3V4": ["NTC"]
+        },
+        "taxa": ["Atopobium", "Fusobacterium", "Mycobacterium", "Propionibacterium"],
+        "annot_file": "data/meta_02.tsv",
+        "id_map": "data/ID_map.tsv"
+    },
+    "tools": {
+        "fastqc": {
+            "bin": "tools/fastqc/fastqc",
+            "version": "v0.11.7",
+            "odir": "data/fastqc"
+        },
+        "multiqc":{
+            "bin": "multiqc",
+            "version": "1.6",
+            "odir": "data/multiqc"
+        },
+        "lotus": {
+            "bin": "export PERL5LIB= ; tools/lotus/lotus.pl",
+            "version": "1.565",
+            "config": "tools/lotus/lOTUs.cfg",
+            "sdm": "tools/lotus/sdm_miSeq.txt",
+            "header": ["SampleID", "ForwardPrimer", "ReversePrimer", "fastqFile"],
+            "odir": "data/lotus"
+        },
+        "blast": {
+            "db": "/share/prog_data/ncbi_blast_nt/nt",
+            "version_db": "04/08/2014 04:34:50",
+            "bin_blastn": "tools/blast/bin/blastn",
+            "bin_format": "tools/blast/bin/blast_formatter",
+            "version": "2.6.0+",
+            "params_blastn": "-outfmt 11 -task megablast -num_threads 10 -max_target_seqs 10 -perc_identity 80 -qcov_hsp_perc 80",
+            "header": "qseqid qlen sseqid slen qstart qend sstart send evalue bitscore length pident qcovs qcovhsp",
+            "odir": "data/blastn_nt"
+        },
+        "ampvis2": {
+            "odir": "data/tools/blastampvis2"
+        },
+        "krona": {
+            "bin": "tools/krona/KronaTools/bin",
+            "version": "2.5"
+        },
+        "edirect": {
+            "bin": "/home/vgalata/Programms/EDirect/edirect",
+            "cmd": {
+                "nuccore": "{path}/efetch -db nuccore -id '{ids}' -format docsum |{path}/xtract -pattern DocumentSummary -EX '(NA)' -GI '(NA)' -ACC '(NA)' -TID '(NA)' -EX Extra -GI Gi -ACC AccessionVersion -TID TaxId -element '&EX' '&GI' '&ACC' '&TID' > {output}",
+                "taxon": "{path}/efetch -db taxonomy -id {ids} -format xml | {path}/xtract -pattern Taxon -sep '|' -element TaxId,ScientificName,Rank -element Lineage -block '*/Taxon' -sep '|' -element TaxId,ScientificName,Rank > {output}"
+            }
+        }
+    }
+}
