@@ -10,4 +10,5 @@ data/*
 !/data/meta_02.tsv
 !/data/ID_map.tsv
 !/data/primer.txt
+!/data/sra_map.tsv
 !/data/precomputed/

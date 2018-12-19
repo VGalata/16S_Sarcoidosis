@@ -1,4 +1,9 @@
-Code used for the analysis of the 16S dataset of sarcoidosis patients and patients with other interstitial lung disease.
+# About
+
+Code used for the analysis of the 16S rRNA gene sequencing dataset of pulmonary microbiota
+from sarcoidosis patients and patients with other interstitial lung disease.
+
+The raw reads were submitted to [Sequence Read Archive (SRA)](https://www.ncbi.nlm.nih.gov/sra): BioProject ID [PRJNA510549](https://www.ncbi.nlm.nih.gov/sra/?term=PRJNA510549).
 
 # Requirements
 
@@ -28,25 +33,36 @@ You may need to adjust the paths to these tools in `pipeline.json`.
 Currently all paths are linking to `tools/`.
 
 ## Data
-Raw FASTQ files are expected to be in `data/fastq` (otherwise adjust the path in `pipeline.json`) and their naming scheme should be
+Raw FASTQ files are expected to be in `data/fastq/` (otherwise adjust the path in `pipeline.json`) and their naming scheme should be
 `{sid}_{aid}_{rid}.fastq` where `sid` is the sample ID (same as in the column `SampleID` in `data/meta_01.tsv`),
 `aid` the amplicon ID (`V1V2` or `V3V4`) and `rid` the read ID (`R1` or `R2`).
+A mapping of the SRA IDs to the sample IDs can be found in `data/sra_map.tsv`.
 
 # Note: precomputed output
 ## LotuS output
 Rerunning LotuS should produce the same OTUs but their IDs can change.
 Thus, the output files are provided in `data/precomputed/lotus` and will be used by the script.
-If you want to rerun LotuS comment out the currently used rule `rule run_lotus_placeholder` and remove the comment flags for `run_lotus` (see comments in `pipeline.snake`).
+If you want to rerun LotuS, comment out the currently used rule `rule run_lotus_placeholder`
+and remove the comment flags for the rule `run_lotus` (see comments in `pipeline.snake`).
 
 ## BLASTn hits
-Since the results depend on the used database version the output files are provided in `data/precomputed/blastn_nt`
+Since the results depend on the used database version, the output files are provided in `data/precomputed/blastn_nt`
 and will be used by the script.
 The original rules `run_blastn_asn`, `run_blastn_tab`, and `run_blastn_tax` were commented out and
 a placeholder for `run_blastn_tax` was added (see comments in `pipeline.snake`).
 
 # Data
-- Raw reads (FASTQ files): [TODO](XXX)
+- Raw reads (FASTQ files, paired): BioProject ID [PRJNA510549](https://www.ncbi.nlm.nih.gov/sra/?term=PRJNA510549)
+- SRA ID mapping: `data/sra_map.tsv`
 - Sample meta information: files `meta_01.tsv` and `meta_02.tsv` in `data/`
+
+There are: 51 subjects
+- 31 sarcoidosis subjects
+- 19 interstitial lung disease subjects
+- 1 NTC
+
+For each subject there are V1/V2 and V3/V4 amplicons (i.e. 102 samples in total)
+and for each sample there are R1/R2 FASTQ files (104 FASTQ files in total).
 
 # Pipeline
 Run
@@ -63,8 +79,8 @@ snakemake -s pipeline.snake
         - `S<i>` for sarcoidosis samples
         - `C<i>` for "control" samples
     - `data/meta_02.tsv`: Additional sample information, e.g. smoker status etc.
-- NGS data
-    - `data/fastq_raw`
+- NGS data (see section "Data" in "Requirements")
+    - `data/fastq/`
 - Other
     - `data/primer.txt`: Primer sequences (needed for LotuS; see "Note: precomputed output")
     - `data/blastn_nt/`: BLASTn hits (see "Note: precomputed output")
